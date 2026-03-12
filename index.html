@@ -723,5 +723,278 @@
     });
   }
 </script>
+<script type="module">
+        // 1. Import Firebase Core and Firestore Database (using your specific v12.10.0)
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-app.js";
+        import { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-firestore.js";
+
+        // 2. Your specific Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyCvy_jAgAV4lE6_QuaOaCf3-pw1KWQAsc8",
+            authDomain: "tasky-32903.firebaseapp.com",
+            databaseURL: "https://tasky-32903-default-rtdb.firebaseio.com",
+            projectId: "tasky-32903",
+            storageBucket: "tasky-32903.firebasestorage.app",
+            messagingSenderId: "264251970703",
+            appId: "1:264251970703:web:c763fdd6c8fba8b959ccfa"
+        };
+
+        // 3. Initialize Firebase and Firestore
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const tasksCol = collection(db, 'tasks');
+
+        // 4. State Management
+        let date = new Date();
+        let currentMonth = date.getMonth();
+        let currentYear = date.getFullYear();
+        let selectedDate = formatDate(date); 
+        let tasks = []; // Will be loaded from Firebase
+        let isBucketListMode = false;
+
+        // DOM Elements
+        const monthYearEl = document.getElementById('monthYear');
+        const calendarGrid = document.querySelector('.calendar-grid');
+        const taskListEl = document.getElementById('taskList');
+        const taskInput = document.getElementById('taskInput');
+        const addTaskBtn = document.getElementById('addTaskBtn');
+        const panelTitle = document.getElementById('panelTitle');
+        const progressBar = document.getElementById('progressBar');
+        const taskStats = document.getElementById('taskStats');
+        const themeToggleBtn = document.getElementById('themeToggle');
+        const tabDaily = document.getElementById('tabDaily');
+        const tabBucket = document.getElementById('tabBucket');
+
+        // 5. App Initialization
+        async function init() {
+            const savedTheme = localStorage.getItem('chronoTheme') || 'light';
+            document.body.setAttribute('data-theme', savedTheme);
+            updateThemeIcon(savedTheme);
+
+            // Fetch tasks from Firebase
+            const querySnapshot = await getDocs(tasksCol);
+            tasks = [];
+            querySnapshot.forEach((doc) => {
+                tasks.push({ id: doc.id, ...doc.data() });
+            });
+
+            renderCalendar();
+            renderTasks();
+        }
+
+        function formatDate(d) {
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        // 6. Calendar Logic
+        function renderCalendar() {
+            const daysToRemove = calendarGrid.querySelectorAll('.day, .empty');
+            daysToRemove.forEach(el => el.remove());
+
+            const firstDayIndex = new Date(currentYear, currentMonth, 1).getDay();
+            const lastDay = new Date(currentYear, currentMonth + 1, 0).getDate();
+            const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+            
+            monthYearEl.textContent = `${months[currentMonth]} ${currentYear}`;
+
+            for (let i = 0; i < firstDayIndex; i++) {
+                const emptyDiv = document.createElement('div');
+                emptyDiv.classList.add('empty');
+                calendarGrid.appendChild(emptyDiv);
+            }
+
+            const todayStr = formatDate(new Date());
+
+            for (let i = 1; i <= lastDay; i++) {
+                const dayDiv = document.createElement('div');
+                dayDiv.classList.add('day');
+                dayDiv.textContent = i;
+                dayDiv.style.animationDelay = `${(i * 0.01)}s`;
+
+                const loopDate = new Date(currentYear, currentMonth, i);
+                const dateStr = formatDate(loopDate);
+
+                if (dateStr === todayStr) dayDiv.classList.add('today');
+                if (dateStr === selectedDate && !isBucketListMode) dayDiv.classList.add('selected');
+
+                const hasTasks = tasks.some(t => t.date === dateStr && !t.isBucketList);
+                if (hasTasks) dayDiv.classList.add('has-tasks');
+
+                dayDiv.addEventListener('click', () => {
+                    selectedDate = dateStr;
+                    isBucketListMode = false;
+                    tabDaily.classList.add('active');
+                    tabBucket.classList.remove('active');
+                    renderCalendar();
+                    renderTasks();
+                });
+
+                calendarGrid.appendChild(dayDiv);
+            }
+        }
+
+        document.getElementById('prevMonth').addEventListener('click', () => {
+            currentMonth--;
+            if (currentMonth < 0) { currentMonth = 11; currentYear--; }
+            renderCalendar();
+        });
+
+        document.getElementById('nextMonth').addEventListener('click', () => {
+            currentMonth++;
+            if (currentMonth > 11) { currentMonth = 0; currentYear++; }
+            renderCalendar();
+        });
+
+        // 7. Firebase Task Logic
+        function renderTasks() {
+            taskListEl.innerHTML = '';
+            
+            const filteredTasks = tasks.filter(t => 
+                isBucketListMode ? t.isBucketList : (t.date === selectedDate && !t.isBucketList)
+            );
+
+            if (isBucketListMode) {
+                panelTitle.textContent = "My Bucket List";
+                taskInput.placeholder = "Add a life goal...";
+            } else {
+                const dateObj = new Date(selectedDate + 'T00:00:00'); 
+                panelTitle.textContent = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                taskInput.placeholder = "Add a daily task...";
+            }
+
+            filteredTasks.forEach(task => {
+                const li = document.createElement('li');
+                li.className = `task-item ${task.completed ? 'completed' : ''}`;
+                // Note: IDs are wrapped in quotes here because Firebase uses strings for IDs
+                li.innerHTML = `
+                    <div class="task-content">
+                        <label class="checkbox-wrapper">
+                            <input type="checkbox" ${task.completed ? 'checked' : ''} onchange="toggleTask('${task.id}')">
+                            <span class="checkmark"></span>
+                        </label>
+                        <span class="task-text">${task.text}</span>
+                    </div>
+                    <div class="task-actions">
+                        <button onclick="deleteTask('${task.id}')"><i class="fa-solid fa-trash"></i></button>
+                    </div>
+                `;
+                taskListEl.appendChild(li);
+            });
+
+            if (filteredTasks.length === 0) {
+                taskListEl.innerHTML = `<p style="text-align:center; color: var(--text-muted); margin-top:20px;">No goals yet. Start dreaming!</p>`;
+            }
+
+            const completedCount = filteredTasks.filter(t => t.completed).length;
+            const totalCount = filteredTasks.length;
+            const percentage = totalCount === 0 ? 0 : (completedCount / totalCount) * 100;
+            
+            progressBar.style.width = `${percentage}%`;
+            taskStats.textContent = `${completedCount}/${totalCount}`;
+
+            if (totalCount > 0 && completedCount === totalCount) {
+                triggerConfetti();
+            }
+        }
+
+        addTaskBtn.addEventListener('click', async () => {
+            const text = taskInput.value.trim();
+            if (!text) return;
+
+            const newTask = {
+                text: text,
+                date: selectedDate,
+                completed: false,
+                isBucketList: isBucketListMode,
+                timestamp: Date.now()
+            };
+
+            // Save to Firebase
+            const docRef = await addDoc(tasksCol, newTask);
+            
+            // Update UI
+            tasks.push({ id: docRef.id, ...newTask });
+            renderCalendar();
+            renderTasks();
+            taskInput.value = '';
+        });
+
+        taskInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') addTaskBtn.click();
+        });
+
+        // Global functions for inline HTML event listeners
+        window.toggleTask = async function(id) {
+            const taskIndex = tasks.findIndex(t => t.id === id);
+            if (taskIndex > -1) {
+                const task = tasks[taskIndex];
+                const newStatus = !task.completed;
+                
+                // Update Firebase
+                const taskDoc = doc(db, 'tasks', id);
+                await updateDoc(taskDoc, { completed: newStatus });
+                
+                // Update UI
+                task.completed = newStatus;
+                renderTasks();
+            }
+        }
+
+        window.deleteTask = async function(id) {
+            // Delete from Firebase
+            const taskDoc = doc(db, 'tasks', id);
+            await deleteDoc(taskDoc);
+            
+            // Update UI
+            tasks = tasks.filter(t => t.id !== id);
+            renderCalendar();
+            renderTasks();
+        }
+
+        // 8. Tabs & Theme Logic
+        tabDaily.addEventListener('click', () => {
+            isBucketListMode = false;
+            tabDaily.classList.add('active');
+            tabBucket.classList.remove('active');
+            renderCalendar();
+            renderTasks();
+        });
+
+        tabBucket.addEventListener('click', () => {
+            isBucketListMode = true;
+            tabBucket.classList.add('active');
+            tabDaily.classList.remove('active');
+            renderCalendar();
+            renderTasks();
+        });
+
+        themeToggleBtn.addEventListener('click', () => {
+            const body = document.body;
+            const currentTheme = body.getAttribute('data-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            
+            body.setAttribute('data-theme', newTheme);
+            localStorage.setItem('chronoTheme', newTheme);
+            updateThemeIcon(newTheme);
+        });
+
+        function updateThemeIcon(theme) {
+            themeToggleBtn.innerHTML = theme === 'dark' ? '<i class="fa-solid fa-sun"></i>' : '<i class="fa-solid fa-moon"></i>';
+        }
+
+        function triggerConfetti() {
+            if(typeof confetti === 'function') {
+                confetti({
+                    particleCount: 100,
+                    spread: 70,
+                    origin: { y: 0.6 },
+                    colors: ['#6c5ce7', '#00cec9', '#ff7675']
+                });
+            }
+        }
+
+        // Start the app
+        init();
+    </script>
 </body>
 </html>
